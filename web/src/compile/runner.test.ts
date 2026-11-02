@@ -1,7 +1,8 @@
 import { CompileStopped, type SyncTexIndex } from "@oleafly/compile-port";
 import { createFakeEngine } from "@oleafly/compile-port/testing";
+import { createHash, webcrypto } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { WebApi, WebText } from "../api";
+import { ApiError, type WebApi, type WebText } from "../api";
 import type { CollabOutputInfo, WebFile } from "../protocol";
 import { ManualTimers } from "../testing/fake-socket";
 import { initialCompileState, resetWebState, useWeb } from "../store";
@@ -57,7 +58,10 @@ function setup(options: { api?: ReturnType<typeof fakeApi>; role?: "owner" | "ed
 }
 
 describe("CompileRunner", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubGlobal("crypto", webcrypto);
+  });
 
   it("is ready only when an engine compiles the project's target", async () => {
     const { runner } = setup();
@@ -82,6 +86,26 @@ describe("CompileRunner", () => {
       ["synctex", "main.tex"],
     ]);
     expect(useWeb.getState().compile.sharedKey).toBe(outputKey(pdfInfo({ size: compile.output?.pdf?.length, compiledAt: 2_000 })));
+    expect(api.putOutput.mock.calls[1]?.[4]).toBe(createHash("sha256").update(compile.output?.pdf ?? new Uint8Array()).digest("hex"));
+    runner.stop();
+  });
+
+  it("does not mark a stale SyncTeX as shared when another writer replaced the PDF", async () => {
+    const api = fakeApi();
+    api.putOutput.mockImplementation(async (_project: string, kind: "pdf" | "synctex", bytes: Uint8Array, main: string, forPdf?: string) => {
+      if (kind === "pdf") {
+        useWeb.setState({ output: [pdfInfo({ compiledBy: "other", compiledAt: 9_000 })] });
+        return pdfInfo({ size: bytes.length, mainFile: main });
+      }
+      expect(forPdf).toMatch(/^[a-f0-9]{64}$/u);
+      throw new ApiError(409, "conflict", "A newer PDF replaced the one this SyncTeX belongs to.");
+    });
+    const { runner } = setup({ api });
+    await runner.start();
+    await runner.compile();
+    await vi.waitFor(() => expect(useWeb.getState().compile.share).toBe("idle"));
+    expect(useWeb.getState().compile.sharedKey).toBeNull();
+    expect(useWeb.getState().output[0]?.compiledBy).toBe("other");
     runner.stop();
   });
 

@@ -13,6 +13,7 @@ import {
 
 export const API_BASE = "/web/api";
 export const MAIN_FILE_HEADER = "X-Oleafly-Main-File";
+export const FOR_PDF_HEADER = "X-Oleafly-For-Pdf";
 export const SIGN_IN_PATH = "/web/sign-in";
 
 export class ApiError extends Error {
@@ -61,7 +62,7 @@ export interface WebApi {
   texts(projectId: string, signal?: AbortSignal): Promise<WebText[]>;
   blob(projectId: string, hash: string): Promise<Blob>;
   output(projectId: string, kind: OutputKind): Promise<Uint8Array | null>;
-  putOutput(projectId: string, kind: OutputKind, bytes: Uint8Array, mainFile: string): Promise<CollabOutputInfo | null>;
+  putOutput(projectId: string, kind: OutputKind, bytes: Uint8Array, mainFile: string, forPdf?: string): Promise<CollabOutputInfo | null>;
   signOut(): Promise<void>;
 }
 
@@ -184,13 +185,14 @@ export function createWebApi(fetcher: Fetcher = (input, init) => fetch(input, in
       if (!response.ok) throw await failure(response);
       return new Uint8Array(await response.arrayBuffer());
     },
-    async putOutput(projectId, kind, bytes, mainFile) {
+    async putOutput(projectId, kind, bytes, mainFile, forPdf) {
       const response = await fetcher(outputUrl(projectId, kind), {
         method: "PUT",
         credentials: "same-origin",
         headers: {
           Accept: "application/json",
           [MAIN_FILE_HEADER]: encodeURIComponent(mainFile),
+          ...(forPdf ? { [FOR_PDF_HEADER]: forPdf } : {}),
           "X-Requested-With": "oleafly-web",
         },
         body: new Blob([bytes as BlobPart], { type: kind === "pdf" ? "application/pdf" : "application/gzip" }),

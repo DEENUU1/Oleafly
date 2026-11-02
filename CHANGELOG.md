@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Browser compilation binds shared SyncTeX to its PDF so simultaneous
+  uploads cannot attach an older source map to a newer document.
+
 ## [0.4.10] - 2026-11-02
 
 ### Added

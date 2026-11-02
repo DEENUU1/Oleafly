@@ -9,7 +9,7 @@ import {
   type SyncTexIndex,
   type SyncTexOpener,
 } from "@oleafly/compile-port";
-import type { WebApi } from "../api";
+import { ApiError, type WebApi } from "../api";
 import type { CollabOutputInfo } from "../protocol";
 import { abilitiesFor } from "../roles";
 import { patchCompile, useWeb } from "../store";
@@ -220,8 +220,18 @@ export class CompileRunner {
     this.lastShareAt = this.now();
     patchCompile({ share: "sharing" });
     try {
+      const digest = output.synctex ? await crypto.subtle.digest("SHA-256", new Uint8Array(output.pdf)) : null;
+      const pdfHash = digest ? Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("") : undefined;
       const shared = await api.putOutput(projectId, "pdf", output.pdf, main);
-      if (output.synctex) await api.putOutput(projectId, "synctex", output.synctex, main);
+      if (output.synctex) {
+        try {
+          await api.putOutput(projectId, "synctex", output.synctex, main, pdfHash);
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 409) throw error;
+          if (!this.stopped) patchCompile({ share: "idle", sharedKey: null });
+          return;
+        }
+      }
       if (!this.stopped) patchCompile({ share: "shared", sharedKey: outputKey(shared ?? undefined) });
     } catch {
       if (!this.stopped) patchCompile({ share: "failed" });
