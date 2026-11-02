@@ -419,29 +419,6 @@ test("long renderer operations survive the bridge deadline and retain failures",
 test.describe("live identifier lookups (G7)", () => {
   test.skip(skipNetwork, "network lookups skipped (E2E_SKIP_NETWORK=1)");
 
-  test("doi, isbn, and pmid resolve to real bibtex", async ({ tauriPage }) => {
-    test.setTimeout(120_000);
-    const lookup = (identifier: string) => evaluateLong<{ bibtex?: string; error?: string }>(
-      tauriPage,
-      `import("/src/features/citation.ts").then((m) => m.resolveCitation(${scriptValue(identifier)}))`,
-      60_000,
-    );
-    const doi = await lookup("10.1093/comjnl/27.2.97");
-    expect(doi.error).toBeUndefined();
-    expect(doi.bibtex ?? "").toMatch(/@article\{/);
-    expect(doi.bibtex ?? "").toContain("Literate Programming");
-
-    const isbn = await lookup("978-0-262-03561-3");
-    expect(isbn.error).toBeUndefined();
-    expect(isbn.bibtex ?? "").toMatch(/@book\{/);
-    expect(isbn.bibtex ?? "").toContain("Deep Learning");
-
-    const pmid = await lookup("32172672");
-    expect(pmid.error).toBeUndefined();
-    expect(pmid.bibtex ?? "").toMatch(/@article\{/);
-    expect(pmid.bibtex ?? "").toContain("pmid = {32172672}");
-  });
-
   test("an arxiv e-print round-trips into a compiling project", async ({ tauriPage }) => {
     test.setTimeout(480_000);
     await tauriPage.evaluate(

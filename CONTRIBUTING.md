@@ -126,6 +126,16 @@ through the variables in `e2e/.env.example`. Keep credentials outside Git.
 Use `--from-spec=<filename>.spec.ts` to resume the Windows sweep at an exact
 spec filename; the runner first creates the shared document in a fresh library.
 
+Identifier citation tests use a local HTTP fixture through the native lookup
+commands. The fixture override is compiled only with `e2e-testing`; release
+builds cannot redirect citation services. Test the fixture with
+`node --experimental-strip-types --test e2e/citation-fixture.node-tests.ts`.
+Public DOI, ISBN and PMID checks run separately as a non-blocking nightly or
+manual CI job. To run that smoke check locally, set
+`OLEAFLY_E2E_LIVE_CITATIONS=1` and run `111-citation-lookups.spec.ts` with
+`--grep="live citation service smoke check"`. `E2E_SKIP_NETWORK=1` still disables
+the live check.
+
 For the browser harnesses, start Vite with `OLEAFLY_E2E_DISABLE_HMR=1`
 (PowerShell: `$env:OLEAFLY_E2E_DISABLE_HMR="1"; pnpm dev`). This also disables
 HMR sockets in PDF module workers, avoiding a Playwright Firefox transport

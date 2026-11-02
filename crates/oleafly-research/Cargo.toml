@@ -10,6 +10,8 @@ rust-version = "1.88"
 [features]
 # Test helpers other crates use in their own tests (owner overrides, counters).
 test-support = []
+# Local citation transport fixtures for the non-distributable desktop E2E build.
+e2e-hooks = []
 
 [dependencies]
 oleafly-core = { path = "../oleafly-core" }

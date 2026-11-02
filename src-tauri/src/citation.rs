@@ -1,3 +1,9 @@
+#[cfg(feature = "e2e-testing")]
+#[tauri::command]
+pub fn debug_citation_fixture(base_url: Option<String>) -> Result<(), String> {
+    oleafly_research::citation::set_fixture_base(base_url.as_deref())
+}
+
 /// Canonical BibTeX for a DOI, via doi.org content negotiation.
 #[tauri::command]
 pub async fn fetch_doi_bibtex(doi: String) -> Result<String, String> {

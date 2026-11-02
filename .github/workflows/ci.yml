@@ -112,6 +112,9 @@ jobs:
       - name: Check Tauri npm packages match their crates
         run: pnpm tauri-versions:check
 
+      - name: Test local citation service fixtures
+        run: node --experimental-strip-types --test e2e/citation-fixture.node-tests.ts
+
       # `pnpm audit` exits 1 both when it finds an advisory and when it cannot
       # reach registry.npmjs.org, so a registry outage used to read as a
       # vulnerability and fail every branch. Real findings still fail the job.
@@ -1678,6 +1681,35 @@ jobs:
             e2e-artifacts/**/*.log
           retention-days: 7
           if-no-files-found: ignore
+
+  citation-live-smoke:
+    name: Citation services (live smoke, Windows)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: e2e-build-windows
+    runs-on: windows-2022
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: e2e-app-windows
+      - name: Unpack the app
+        id: unpack-app
+        shell: bash
+        run: bash scripts/ci/unpack-windows-e2e-app.sh oleafly-e2e-windows.tar.gz e2e-app
+      - name: Check public citation services
+        shell: pwsh
+        env:
+          OLEAFLY_E2E_APP_BINARY: ${{ steps.unpack-app.outputs.binary }}
+          OLEAFLY_E2E_LIVE_CITATIONS: "1"
+        run: powershell -File scripts/e2e.ps1 e2e/tests/111-citation-lookups.spec.ts --grep="live citation service smoke check"
 
   installers-windows:
     name: Installers (Windows)

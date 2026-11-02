@@ -915,6 +915,8 @@ pub fn run() {
             latex_engine::tlmgr_remove,
             latex_engine::compile_tagged,
             citation::fetch_doi_bibtex,
+            #[cfg(feature = "e2e-testing")]
+            citation::debug_citation_fixture,
             citation::fetch_arxiv,
             citation::fetch_isbn_bibtex,
             citation::fetch_pmid_bibtex,

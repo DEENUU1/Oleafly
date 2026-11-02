@@ -3,6 +3,47 @@ const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 
 const MAX_REDIRECTS: usize = 3;
 
+#[cfg(feature = "e2e-hooks")]
+static FIXTURE_BASE: std::sync::RwLock<Option<reqwest::Url>> = std::sync::RwLock::new(None);
+
+#[cfg(feature = "e2e-hooks")]
+pub fn set_fixture_base(base: Option<&str>) -> Result<(), String> {
+    let base = base
+        .map(|base| {
+            let url = reqwest::Url::parse(base).map_err(|error| error.to_string())?;
+            if url.scheme() != "http"
+                || url.host_str() != Some("127.0.0.1")
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.path() != "/"
+                || url.query().is_some()
+                || url.fragment().is_some()
+            {
+                return Err("A citation fixture must be an HTTP loopback origin.".to_string());
+            }
+            Ok(url)
+        })
+        .transpose()?;
+    *FIXTURE_BASE.write().map_err(|error| error.to_string())? = base;
+    Ok(())
+}
+
+fn lookup_url(url: &str) -> Result<reqwest::Url, String> {
+    let original = reqwest::Url::parse(url).map_err(|error| error.to_string())?;
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(mut base) = FIXTURE_BASE
+        .read()
+        .map_err(|error| error.to_string())?
+        .clone()
+    {
+        let host = original.host_str().ok_or("Citation URL has no host.")?;
+        base.set_path(&format!("/{host}{}", original.path()));
+        base.set_query(original.query());
+        return Ok(base);
+    }
+    Ok(original)
+}
+
 /// Whether a lookup follows a redirect to `next` after `previous` hops. A DOI
 /// whose agency cannot answer content negotiation redirects to the
 /// registrant's own address, which can be anything: only a public https host
@@ -69,7 +110,7 @@ pub async fn fetch_doi_bibtex(doi: &str) -> Result<String, String> {
     }
     let url = format!("https://doi.org/{doi}");
     let resp = client()?
-        .get(&url)
+        .get(lookup_url(&url)?)
         .header("Accept", "application/x-bibtex")
         .send()
         .await
@@ -648,7 +689,7 @@ async fn openlibrary_json(
     query: &[(&str, &str)],
 ) -> Result<serde_json::Value, String> {
     let resp = client
-        .get(url)
+        .get(lookup_url(url)?)
         .query(query)
         .send()
         .await
@@ -893,7 +934,9 @@ pub async fn fetch_pmid_bibtex(pmid: &str) -> Result<String, String> {
 
 async fn fetch_pmid_summary(client: &reqwest::Client, pmid: &str) -> Result<String, String> {
     let resp = client
-        .get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi")
+        .get(lookup_url(
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi",
+        )?)
         .query(&[("db", "pubmed"), ("id", pmid), ("retmode", "json")])
         .send()
         .await
@@ -912,7 +955,9 @@ async fn fetch_pmid_summary(client: &reqwest::Client, pmid: &str) -> Result<Stri
 
 async fn fetch_pmid_citation(client: &reqwest::Client, pmid: &str) -> Result<String, String> {
     let resp = client
-        .get("https://api.ncbi.nlm.nih.gov/lit/ctxp/v1/pubmed/")
+        .get(lookup_url(
+            "https://api.ncbi.nlm.nih.gov/lit/ctxp/v1/pubmed/",
+        )?)
         .query(&[("format", "csl"), ("id", pmid)])
         .send()
         .await
@@ -1305,5 +1350,69 @@ mod tests {
         assert!(!bib.contains("Nobody"), "{bib}");
         assert!(!bib.contains("pages ="), "{bib}");
         assert!(!bib.contains("doi ="), "{bib}");
+    }
+}
+
+#[cfg(all(test, feature = "e2e-hooks"))]
+mod fixture_tests {
+    use super::*;
+    use axum::{http::StatusCode, routing::get, Json, Router};
+    use serde_json::json;
+
+    struct Fixture(tokio::task::JoinHandle<()>);
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            set_fixture_base(None).expect("reset fixture");
+            self.0.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn identifier_lookups_use_local_http_without_bypassing_parsing_or_errors() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = Router::new()
+            .route("/doi.org/10.1093/comjnl/27.2.97", get(|| async {
+                "@article{k, title={Literate Programming}, year={1984}}"
+            }))
+            .route("/openlibrary.org/api/books", get(|| async {
+                Json(json!({"ISBN:9780262035613": {
+                    "title": "Deep Learning", "authors": [{"name": "Ian Goodfellow"}],
+                    "publish_date": "2016", "publishers": [{"name": "MIT Press"}]
+                }}))
+            }))
+            .route("/eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi", get(|| async {
+                Json(json!({"result": {"32172672": {
+                    "title": "Clinical features", "pubdate": "2020", "authors": [{"name": "Author A"}]
+                }}}))
+            }))
+            .fallback(|| async { StatusCode::SERVICE_UNAVAILABLE });
+        let _fixture = Fixture(tokio::spawn(async move {
+            axum::serve(listener, router).await.expect("fixture server");
+        }));
+        set_fixture_base(Some(&format!("http://{address}"))).unwrap();
+        for refused in [
+            "https://127.0.0.1/",
+            "http://example.org/",
+            "http://127.0.0.1/path",
+            "http://user@127.0.0.1/",
+        ] {
+            assert!(set_fixture_base(Some(refused)).is_err());
+        }
+        let doi = fetch_doi_bibtex("10.1093/comjnl/27.2.97").await.unwrap();
+        assert!(doi.contains("Literate Programming"));
+        assert!(doi.contains("\n  title"), "DOI normalization still runs");
+        let isbn = fetch_isbn_bibtex("978-0-262-03561-3").await.unwrap();
+        assert!(isbn.starts_with("@book{"));
+        assert!(isbn.contains("Deep Learning"));
+        let pmid = fetch_pmid_bibtex("32172672").await.unwrap();
+        assert!(pmid.contains("pmid = {32172672}"));
+        assert!(fetch_doi_bibtex("10.9999/unavailable").await.is_err());
+        set_fixture_base(None).unwrap();
+        assert_eq!(
+            lookup_url("https://doi.org/10.1/a").unwrap().as_str(),
+            "https://doi.org/10.1/a"
+        );
     }
 }
