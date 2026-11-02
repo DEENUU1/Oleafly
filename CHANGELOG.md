@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Conference deadlines in Pacific, Eastern and Mountain regional time now
+  account for daylight saving time on the deadline date.
+
 ## [0.4.10] - 2026-11-02
 
 ### Added

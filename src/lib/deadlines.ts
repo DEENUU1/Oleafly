@@ -21,25 +21,50 @@ const NAMED_ZONES: Record<string, number> = {
   AoE: -12,
   PST: -8,
   PDT: -7,
-  PT: -8,
   MST: -7,
   MDT: -6,
-  "US Mountain": -7,
   CST: -6,
   CDT: -5,
   EST: -5,
   EDT: -4,
-  ET: -5,
-  "US Eastern": -5,
   GMT: 0,
   UTC: 0,
 };
+
+const REGIONAL_ZONES: Record<string, string> = {
+  PT: "America/Los_Angeles",
+  ET: "America/New_York",
+  "US Eastern": "America/New_York",
+  "US Mountain": "America/Denver",
+};
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function regionalInstant(wallTime: number, zone: string): Date {
+  let formatter = zoneFormatters.get(zone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    });
+    zoneFormatters.set(zone, formatter);
+  }
+  const localTime = (instant: number): number => {
+    const parts = formatter.formatToParts(instant);
+    const part = (name: Intl.DateTimeFormatPartTypes): number => Number(parts.find((entry) => entry.type === name)?.value);
+    return Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  };
+  // Inspect both sides of a possible transition, then require a unique wall-clock match.
+  const day = 86_400_000;
+  const offsets = new Set([-day, day].map((delta) => localTime(wallTime + delta) - (wallTime + delta)));
+  const matches = [...offsets].map((offset) => wallTime - offset).filter((instant) => localTime(instant) === wallTime);
+  return new Date(matches.length === 1 ? matches[0] : Number.NaN);
+}
 
 export function deadlineInstant(at: string, timezone: string): Date {
   const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})$/.exec(at.trim());
   if (!m) return new Date(Number.NaN);
   const tz = timezone.trim();
-  const offsetHours = NAMED_ZONES[tz] ?? Number(/^UTC([+-]\d+)$/.exec(tz)?.[1] ?? 0);
   const utc = Date.UTC(
     Number(m[1]),
     Number(m[2]) - 1,
@@ -48,6 +73,11 @@ export function deadlineInstant(at: string, timezone: string): Date {
     Number(m[5]),
     Number(m[6]),
   );
+  if (new Date(utc).toISOString().slice(0, 19) !== at.trim().replace(" ", "T")) return new Date(Number.NaN);
+  const zone = Object.hasOwn(REGIONAL_ZONES, tz) ? REGIONAL_ZONES[tz] : undefined;
+  if (zone) return regionalInstant(utc, zone);
+  const offsetHours = Object.hasOwn(NAMED_ZONES, tz) ? NAMED_ZONES[tz] : Number(/^UTC([+-]\d+)$/.exec(tz)?.[1]);
+  if (!Number.isFinite(offsetHours) || offsetHours < -12 || offsetHours > 14) return new Date(Number.NaN);
   return new Date(utc - offsetHours * 3_600_000);
 }
 
